@@ -16,7 +16,16 @@ go install github.com/bvisness/dtrace2spall@latest
 
 ## Quick Start
 
-TODO: example with timestamps
+```bash
+# Run DTrace and save to profile.dtrace
+dtrace -n 'profile-997 /pid == $target/ { @[timestamp, pid, tid, ustack(100)] = count(); }' \
+    -x ustackframes=100 \
+    -o profile.dtrace \
+    -x aggsortkey -x aggsortkeypos=0 \
+    -c <path to my program>
+# Convert to Spall and save to profile.spall
+cat profile.dtrace | dtrace2spall --freq 997 -o profile.spall --fields=-,pid,tid
+```
 
 ## Detailed Usage
 
@@ -34,7 +43,7 @@ Flags:
 
 ### Simple profiling
 
-The simplest use of DTrace for user-level profiling is with the `profile` and `ustack` providers. The DTrace program and invocation might look like:
+The simplest use of DTrace for user-level profiling is with the [`profile`](https://illumos.org/books/dtrace/chp-profile.html#chp-profile) and [`ustack`](https://illumos.org/books/dtrace/chp-user.html#chp-user-4) providers. The DTrace program and invocation might look like:
 
 ```
 profile-997
