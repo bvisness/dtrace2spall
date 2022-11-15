@@ -164,9 +164,16 @@ func main() {
 					defer done()
 				}
 
+				type PidTid struct {
+					Pid, Tid uint32
+				}
+				type ThreadState struct {
+					LatestStack []string
+				}
+
 				state := StateExpectingNewFrame
 				var pid, tid uint32
-				var currentStack []string // the previous entry's stack
+				var threadStates = make(map[PidTid]*ThreadState)
 				var stackEntries []string // the stack entries we've built up so far (reverse order because hooray dtrace)
 				var now float64 = 0
 
@@ -187,8 +194,8 @@ func main() {
 					if passthrough {
 						fmt.Fprintln(os.Stdout, line)
 					}
-
 					line = strings.TrimSpace(line)
+
 					if line == "" {
 						// Nothin'. Must be between frames.
 						state = StateExpectingNewFrame
@@ -237,19 +244,25 @@ func main() {
 						}
 						now += float64(count)
 
+						threadState, ok := threadStates[PidTid{pid, tid}]
+						if !ok {
+							threadState = &ThreadState{}
+							threadStates[PidTid{pid, tid}] = threadState
+						}
+
 						for i := 0; i < len(stackEntries); i++ {
 							entry := stackEntries[len(stackEntries)-1-i] // accessing in reverse
-							if i < len(currentStack) && currentStack[i] != entry {
+							if i < len(threadState.LatestStack) && threadState.LatestStack[i] != entry {
 								// Different entry - end everything past this point
-								for j := len(currentStack) - 1; j >= i; j-- {
+								for j := len(threadState.LatestStack) - 1; j >= i; j-- {
 									w.End(tid, pid, now)
 								}
-								currentStack = currentStack[:i]
+								threadState.LatestStack = threadState.LatestStack[:i]
 							}
-							if i >= len(currentStack) {
+							if i >= len(threadState.LatestStack) {
 								// New stack entries; begin these events
 								w.Begin(entry, uint32(tid), pid, now)
-								currentStack = append(currentStack, entry)
+								threadState.LatestStack = append(threadState.LatestStack, entry)
 							}
 						}
 
