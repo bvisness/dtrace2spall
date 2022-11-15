@@ -24,7 +24,7 @@ dtrace -n 'profile-997 /pid == $target/ { @[timestamp, pid, tid, ustack(100)] = 
     -x aggsortkey -x aggsortkeypos=0 \
     -c <path to my program>
 # Convert to Spall and save to profile.spall
-cat profile.dtrace | dtrace2spall --freq 997 -o profile.spall --fields=-,pid,tid
+cat profile.dtrace | dtrace2spall --freq 997 -o profile.spall --fields=_,pid,tid
 ```
 
 ## Detailed Usage
@@ -37,7 +37,8 @@ Flags:
       --fields strings   An array of fields preceding each stack. Valid fields: pid, tid. Any unrecognized fields will be ignored (consider using "-" for any such fields).
   -f, --freq int         The frequency of profile sampling, in Hz. (default 1000)
   -h, --help             help for dtrace2spall
-  -o, --out string       The file to write the results to. Use "-" for stdout.
+      --json             Output chrome://tracing JSON instead of the Spall format.
+  -o, --out string       The file to write the results to. Use "-" for stdout. (default "-")
       --passthrough      Pass the input data through to stdout, making this tool invisible to pipelines. Requires --out.
 ```
 

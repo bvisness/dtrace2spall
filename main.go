@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +25,107 @@ const (
 	StateExpectingNewFrame State = iota + 1 // waiting for fields or the first entry in a stack
 	StateInFrame                            // waiting for the count to end the frame
 )
+
+type ProfileWriter interface {
+	Header()
+	Begin(name string, tid, pid uint32, when float64)
+	End(tid, pid uint32, when float64)
+	Footer()
+}
+
+type SpallWriter struct {
+	spall.Eventer
+}
+
+func NewSpallWriter(w io.Writer, unit spall.TimestampUnit) (ProfileWriter, func()) {
+	p := spall.NewProfile(w, unit)
+	e := p.NewEventer()
+
+	return &SpallWriter{e}, func() {
+		e.Close()
+		p.Close()
+	}
+}
+
+func (w *SpallWriter) Header() {}
+func (w *SpallWriter) Footer() {}
+
+func (w *SpallWriter) Begin(name string, tid, pid uint32, when float64) {
+	w.Eventer.BeginTidPid(name, tid, pid, when)
+}
+
+func (w *SpallWriter) End(tid, pid uint32, when float64) {
+	w.Eventer.EndTidPid(tid, pid, when)
+}
+
+type JSONWriter struct {
+	w        io.Writer
+	unit     spall.TimestampUnit
+	didEvent bool
+}
+
+func NewJSONWriter(w io.Writer, unit spall.TimestampUnit) ProfileWriter {
+	return &JSONWriter{
+		w:    w,
+		unit: unit,
+	}
+}
+
+func (w *JSONWriter) Header() {
+	w.w.Write([]byte("[\n"))
+}
+
+func (w *JSONWriter) Begin(name string, tid, pid uint32, when float64) {
+	type BeginEvent struct {
+		Name      string `json:"name"`
+		Cat       string `json:"cat"`
+		Type      string `json:"ph"`
+		Timestamp int64  `json:"ts"`
+		Pid       uint32 `json:"pid"`
+		Tid       uint32 `json:"tid"`
+	}
+
+	if w.didEvent {
+		w.w.Write([]byte(",\n"))
+	}
+	event, _ := json.Marshal(BeginEvent{
+		Name:      name,
+		Cat:       "dtrace",
+		Type:      "B",
+		Timestamp: int64(when * float64(w.unit)),
+		Pid:       pid,
+		Tid:       tid,
+	})
+	w.w.Write(event)
+
+	w.didEvent = true
+}
+
+func (w *JSONWriter) End(tid, pid uint32, when float64) {
+	type EndEvent struct {
+		Type      string `json:"ph"`
+		Timestamp int64  `json:"ts"`
+		Pid       uint32 `json:"pid"`
+		Tid       uint32 `json:"tid"`
+	}
+
+	if w.didEvent {
+		w.w.Write([]byte(",\n"))
+	}
+	event, _ := json.Marshal(EndEvent{
+		Type:      "E",
+		Timestamp: int64(when * float64(w.unit)),
+		Pid:       pid,
+		Tid:       tid,
+	})
+	w.w.Write(event)
+
+	w.didEvent = true
+}
+
+func (w *JSONWriter) Footer() {
+	w.w.Write([]byte("\n]\n"))
+}
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -49,11 +151,18 @@ func main() {
 
 				freq, _ := cmd.PersistentFlags().GetInt("freq")
 				fields, _ := cmd.PersistentFlags().GetStringSlice("fields")
+				json, _ := cmd.PersistentFlags().GetBool("json")
 
-				p := spall.NewProfile(f, 1_000_000/spall.TimestampUnit(freq)) // (µs/s) / (samples/s) = µs/sample
-				defer p.Close()
-				e := p.NewEventer()
-				defer e.Close()
+				µsPerSample := 1_000_000 / spall.TimestampUnit(freq) // (µs/s) / (samples/s) = µs/sample
+
+				var w ProfileWriter
+				if json {
+					w = NewJSONWriter(f, µsPerSample)
+				} else {
+					var done func()
+					w, done = NewSpallWriter(f, µsPerSample)
+					defer done()
+				}
 
 				state := StateExpectingNewFrame
 				var pid, tid uint32
@@ -69,6 +178,8 @@ func main() {
 					}
 					stackEntries = append(stackEntries, line)
 				}
+
+				w.Header()
 
 				scanner := bufio.NewScanner(os.Stdin)
 				for scanner.Scan() {
@@ -131,13 +242,13 @@ func main() {
 							if i < len(currentStack) && currentStack[i] != entry {
 								// Different entry - end everything past this point
 								for j := len(currentStack) - 1; j >= i; j-- {
-									e.EndTidPid(tid, pid, now)
+									w.End(tid, pid, now)
 								}
 								currentStack = currentStack[:i]
 							}
 							if i >= len(currentStack) {
 								// New stack entries; begin these events
-								e.BeginTidPid(entry, uint32(tid), pid, now)
+								w.Begin(entry, uint32(tid), pid, now)
 								currentStack = append(currentStack, entry)
 							}
 						}
@@ -157,17 +268,15 @@ func main() {
 					fmt.Fprintln(os.Stderr, "reading standard input:", err)
 				}
 
-				// Pop the remaining items
-				for i := len(currentStack) - 1; i >= 0; i-- {
-					e.EndTidPid(tid, pid, now)
-				}
+				w.Footer()
 			}
 		},
 	}
 	rootCmd.PersistentFlags().IntP("freq", "f", 1000, "The frequency of profile sampling, in Hz.")
-	rootCmd.PersistentFlags().StringP("out", "o", "", "The file to write the results to. Use \"-\" for stdout.")
+	rootCmd.PersistentFlags().StringP("out", "o", "-", "The file to write the results to. Use \"-\" for stdout.")
 	rootCmd.PersistentFlags().StringSlice("fields", nil, "An array of fields preceding each stack. Valid fields: pid, tid. Any unrecognized fields will be ignored (consider using \"-\" for any such fields).")
 	rootCmd.PersistentFlags().Bool("passthrough", false, "Pass the input data through to stdout, making this tool invisible to pipelines. Requires --out.")
+	rootCmd.PersistentFlags().Bool("json", false, "Output chrome://tracing JSON instead of the Spall format.")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
