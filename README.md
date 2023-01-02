@@ -1,6 +1,6 @@
 # dtrace2spall
 
-Converts DTrace profiles to the Spall format.
+Converts DTrace profiles to the Spall format, and optionally the chrome://tracing JSON format.
 
 [Spall](https://gravitymoth.com/spall/) is an extremely fast profiler by Colin Davidson. For optimal file size and load times, Spall has a proprietary binary format. This tool produces files in that format.
 
