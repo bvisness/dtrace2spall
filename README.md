@@ -8,7 +8,7 @@ This tool is designed to work with DTrace's [`profile`](https://illumos.org/book
 
 ## Installing
 
-[Go 1.19](https://go.dev/) or higher is required. Make sure that `$GOBIN` or `$HOME/go/bin` is on your PATH.
+[Go 1.19](https://go.dev/) or higher is required. Make sure that `$(go env GOBIN)` or `$(go env GOPATH)/bin` is on your PATH.
 
 ```
 go install github.com/bvisness/dtrace2spall@latest
